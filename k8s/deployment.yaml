@@ -18,7 +18,7 @@ spec:
       - name: helloapp
         # Jenkins will replace 'latest' with the build number (e.g., :1, :2)
         # CHANGE 'your-dockerhub-username' to your actual username!
-        image: your-dockerhub-username/helloapp:latest
+        image: mohamadfawzi/helloapp:3
         ports:
         - containerPort: 80
         resources:
