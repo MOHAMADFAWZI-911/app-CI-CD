@@ -1,95 +1,67 @@
 pipeline {
-  agent any
+    agent any
 
-  environment {
-    DOCKERHUB_REPO = "ahmedlebshten/helloapp"
-    IMAGE_TAG = "${env.BUILD_NUMBER}"
-    CD_REPO = "https://github.com/Ahmedlebshten/ArgoCD-Pipeline.git"
-    CD_REPO_PATH = "."
-    DEPLOY_FILE = "deployment.yml"
-  }
-
-  stages {
-
-    stage('Checkout') {
-      steps {
-        checkout scm
-      }
+    environment {
+        // 1. Credentials
+        DOCKERHUB_CREDS = credentials('dockerhub-credentials')
+        GITHUB_CREDS    = credentials('github-pat') // Make sure ID matches Step 1
+        
+        // 2. Configuration
+        DOCKERHUB_USER  = "mohamadfawzi" // <--- CHANGE THIS
+        APP_NAME        = "helloapp"
+        IMAGE_TAG       = "${BUILD_NUMBER}"
+        GIT_REPO_URL    = "github.com/MOHAMADFAWZI-911/app-CI-CD.git" // <--- CHANGE THIS
     }
 
-    stage('Build Docker Image') {
-      steps {
-        sh "docker build -t ${DOCKERHUB_REPO}:${IMAGE_TAG} ."
-        sh "docker tag ${DOCKERHUB_REPO}:${IMAGE_TAG} ${DOCKERHUB_REPO}:latest"
-      }
-    }
-
-    stage('Docker Login') {
-      steps {
-        withCredentials([
-          usernamePassword(
-            credentialsId: 'dockerhub-credentials',
-            usernameVariable: 'DH_USER',
-            passwordVariable: 'DH_PASS'
-          )
-        ]) {
-          sh 'echo $DH_PASS | docker login -u $DH_USER --password-stdin'
+    stages {
+        
+        stage('Build Docker Image') {
+            steps {
+                script {
+                    echo "🔨 Building Docker Image..."
+                    sh "docker build -t $DOCKERHUB_USER/$APP_NAME:$IMAGE_TAG ."
+                }
+            }
         }
-      }
-    }
 
-    stage('Push Docker Image') {
-      steps {
-        sh "docker push ${DOCKERHUB_REPO}:${IMAGE_TAG}"
-        sh "docker push ${DOCKERHUB_REPO}:latest"
-      }
-    }
-
-    stage('Update CD repo (bump image tag)') {
-      steps {
-        withCredentials([
-          usernamePassword(
-            credentialsId: 'git-cred',
-            usernameVariable: 'GIT_USER',
-            passwordVariable: 'GIT_PASS'
-          )
-        ]) {
-          sh '''
-            set -e
-            rm -rf cd-repo
-
-            git clone https://${GIT_USER}:${GIT_PASS}@github.com/Ahmedlebshten/ArgoCD-Pipeline.git cd-repo
-            cd cd-repo || exit 2
-
-            cd "${CD_REPO_PATH}" || (echo "Path ${CD_REPO_PATH} not found" && exit 3)
-
-            if [ ! -f "${DEPLOY_FILE}" ]; then
-              echo "ERROR: ${DEPLOY_FILE} not found under ${CD_REPO_PATH}"
-              exit 4
-            fi
-
-            sed -i "s|image: ${DOCKERHUB_REPO}:.*|image: ${DOCKERHUB_REPO}:${IMAGE_TAG}|g" "${DEPLOY_FILE}"
-
-            git --no-pager diff -- "${DEPLOY_FILE}" || true
-
-            git config user.email "jenkins@ci.local"
-            git config user.name "jenkins"
-
-            if git diff --quiet; then
-              echo "No changes in ${DEPLOY_FILE}"
-            else
-              git add "${DEPLOY_FILE}"
-              git commit -m "ci: bump image to ${IMAGE_TAG}"
-              git push origin HEAD
-            fi
-          '''
+        stage('Push to DockerHub') {
+            steps {
+                script {
+                    echo "📤 Pushing to DockerHub..."
+                    // Login using the credentials variable
+                    sh "echo $DOCKERHUB_CREDS_PSW | docker login -u $DOCKERHUB_CREDS_USR --password-stdin"
+                    sh "docker push $DOCKERHUB_USER/$APP_NAME:$IMAGE_TAG"
+                }
+            }
         }
-      }
-    }
-  }
 
-  post {
-    success { echo "Done: ${DOCKERHUB_REPO}:${IMAGE_TAG}" }
-    failure { echo "Failed" }
-  }
+        stage('Update Manifest (GitOps)') {
+            steps {
+                script {
+                    echo "📝 Updating Kubernetes Manifest..."
+                    // Configure Git
+                    sh """
+                        git config user.email "jenkins@pipeline.com"
+                        git config user.name "Jenkins Pipeline"
+                    """
+                    
+                    // Update the deployment.yaml file
+                    // This assumes your K8s file is at 'k8s/deployment.yaml'
+                    // It looks for 'image: something' and replaces it with the new tag
+                    sh """
+                        sed -i 's|image: .*|image: $DOCKERHUB_USER/$APP_NAME:$IMAGE_TAG|' k8s/deployment.yaml
+                    """
+                    
+                    // Commit and Push the change
+                    withCredentials([usernamePassword(credentialsId: 'github-pat', usernameVariable: 'GIT_USER', passwordVariable: 'GIT_PASS')]) {
+                        sh """
+                            git add k8s/deployment.yaml
+                            git commit -m "CI: Update image to version $IMAGE_TAG [skip ci]"
+                            git push https://$GIT_USER:$GIT_PASS@$GIT_REPO_URL HEAD:main
+                        """
+                    }
+                }
+            }
+        }
+    }
 }
