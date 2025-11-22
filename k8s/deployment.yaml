@@ -1,0 +1,30 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: helloapp
+  namespace: default
+spec:
+  # Keep replicas low (1) to save resources on your t3.small nodes
+  replicas: 1
+  selector:
+    matchLabels:
+      app: helloapp
+  template:
+    metadata:
+      labels:
+        app: helloapp
+    spec:
+      containers:
+      - name: helloapp
+        # Jenkins will replace 'latest' with the build number (e.g., :1, :2)
+        # CHANGE 'your-dockerhub-username' to your actual username!
+        image: your-dockerhub-username/helloapp:latest
+        ports:
+        - containerPort: 80
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
